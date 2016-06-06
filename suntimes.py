@@ -4,7 +4,7 @@
 Dawn, sunrise, noon, sunset and dusk times for the given years.
 """
 from __future__ import print_function
-# from __future__ import unicode_literals  # Doesn't work with Astral .1.1
+from __future__ import unicode_literals
 from astral import Astral  # pip install astral
 # from pprint import pprint
 

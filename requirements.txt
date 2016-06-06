@@ -1,1 +1,1 @@
-astral
+astral>=1.2
