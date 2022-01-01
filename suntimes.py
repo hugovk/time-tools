@@ -1,17 +1,15 @@
 #!/usr/bin/env python
-# encoding: utf-8
 """
 Dawn, sunrise, noon, sunset and dusk times for the given years.
 """
-from __future__ import print_function
-from __future__ import unicode_literals
-from astral import Astral  # pip install astral
-# from pprint import pprint
-
 import argparse
 import datetime
 import json
 import os
+
+from astral import Astral  # pip install astral
+
+# from pprint import pprint
 
 
 def mkdir(directory):
@@ -28,24 +26,23 @@ def json_serial(obj):
 
 
 def sunyears(start_year, end_year):
-    city_name = 'London'
+    city_name = "London"
     a = Astral()
-    a.solar_depression = 'civil'
+    a.solar_depression = "civil"
     city = a[city_name]
 
     sun_times = {}
 
-    print('Information for %s/%s\n' % (city_name, city.region))
+    print(f"Information for {city_name}/{city.region}\n")
 
     timezone = city.timezone
-    print('Timezone: %s' % timezone)
+    print(f"Timezone: {timezone}")
 
-    print(' Latitude: %.02f; Longitude: %.02f\n' %
-          (city.latitude, city.longitude))
+    print(f" Latitude: {city.latitude:.02f}; Longitude: {city.longitude:.02f}\n")
 
     delta = datetime.timedelta(days=1)
 
-    for year in range(start_year, end_year+1):
+    for year in range(start_year, end_year + 1):
         # Loop through all days in year
         start_date = datetime.date(year, 1, 1)
         end_date = datetime.date(year, 12, 31)
@@ -67,13 +64,19 @@ def sunyears(start_year, end_year):
             d += delta
 
     # print(json.dumps(sun_times, default=json_serial))
-    outfilename = "suntimes-{}-{}".format(start_year, end_year)
+    outfilename = f"suntimes-{start_year}-{end_year}"
     outfilename = os.path.join("data", outfilename)
     mkdir("data")
 
     with open(outfilename + ".json", "w") as outfile:
-        json.dump(sun_times, outfile, default=json_serial,
-                  indent=4, separators=(',', ': '), sort_keys=True)
+        json.dump(
+            sun_times,
+            outfile,
+            default=json_serial,
+            indent=4,
+            separators=(",", ": "),
+            sort_keys=True,
+        )
 
     with open(outfilename + ".min.json", "w") as outfile:
         json.dump(sun_times, outfile, default=json_serial)
@@ -82,11 +85,10 @@ def sunyears(start_year, end_year):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Dawn, sunrise, noon, sunset and dusk times",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument(
-        "-s", "--start", type=int, default=1660, help="Start year")
-    parser.add_argument(
-        "-e", "--end", type=int, default=1669, help="End year")
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("-s", "--start", type=int, default=1660, help="Start year")
+    parser.add_argument("-e", "--end", type=int, default=1669, help="End year")
     args = parser.parse_args()
 
     sunyears(args.start, args.end)
