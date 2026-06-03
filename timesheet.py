@@ -121,9 +121,10 @@ def create_pdf(table: PrettyTable, filename: str, name: str) -> None:
     previous_date = None
     for i, row in enumerate(table.rows, start=1):
         current_date = row[0]
-        if previous_date and current_date != previous_date:
+        if current_date and previous_date and current_date != previous_date:
             style.add("LINEABOVE", (0, i), (-1, i), 1, colors.black)
-        previous_date = current_date
+        if current_date:
+            previous_date = current_date
 
     pdf_table.setStyle(style)
 
@@ -173,12 +174,13 @@ def main() -> None:
 
     total_duration = dt.timedelta()
     for start_date, clients in sorted(grouped.items()):
+        date = start_date.strftime("%Y-%m-%d")
         for client, projects in sorted(clients.items(), key=lambda x: x[0].lower()):
             for project, tasks in sorted(projects.items(), key=lambda x: x[0].lower()):
                 for task, duration in sorted(tasks.items(), key=lambda x: x[0].lower()):
                     table.add_row(
                         [
-                            start_date.strftime("%Y-%m-%d"),
+                            date,
                             client,
                             project,
                             task,
@@ -186,6 +188,7 @@ def main() -> None:
                         ]
                     )
                     total_duration += duration
+                    date = ""
         table.add_divider()
 
     # Add total row
