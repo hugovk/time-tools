@@ -152,6 +152,11 @@ def main() -> None:
         action="store_true",
         help="Output the report in PDF format",
     )
+    parser.add_argument(
+        "--no-project",
+        action="store_true",
+        help="Hide the project column",
+    )
     args = parser.parse_args()
 
     data = read_csv(args.filename)
@@ -191,6 +196,8 @@ def main() -> None:
     # Add total row
     table.add_row(["Total", "", "", "", format_duration(total_duration)])
 
+    if args.no_project:
+        table.del_column("Project")
     if args.html:
         print(table.get_html_string())
     elif args.pdf:
