@@ -1,3 +1,6 @@
+# timesheet.py configuration files
+.timesheet.toml
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

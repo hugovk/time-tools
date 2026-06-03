@@ -13,20 +13,31 @@ uv run timesheet.py Toggl_time_entries_2025-01-01_to_2025-01-31.csv --pdf
 import argparse
 import csv
 import datetime as dt
+import tomllib
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from prettytable import PrettyTable
 from prettytable import TableStyle as PrettyTableStyle
 
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #   "prettytable>=3.14",
 #   "reportlab",
 #   "rich",
 # ]
 # ///
+
+
+def read_config(filename: str) -> dict[str, Any]:
+    path = Path(filename)
+    if not path.exists():
+        return {}
+
+    with path.open("rb") as f:
+        return tomllib.load(f)
 
 
 def read_csv(filename: str) -> list[dict[str, Any]]:
@@ -136,22 +147,34 @@ def create_pdf(table: PrettyTable, filename: str, name: str) -> None:
 
 
 def main() -> None:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument(
+        "--config",
+        default=".timesheet.toml",
+        help="TOML file to read option defaults from",
+    )
+    config_args, _ = config_parser.parse_known_args()
+
     parser = argparse.ArgumentParser(
-        description="Read in a CSV file and produce a report showing daily reports"
+        description="Read in a CSV file and produce a report showing daily reports",
+        parents=[config_parser],
     )
     parser.color = True
     parser.add_argument("filename", help="CSV file to read")
     parser.add_argument("-n", "--name", default="Hugo van Kemenade", help="Your name")
     parser.add_argument(
         "--html",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=False,
         help="Output the report in HTML format",
     )
     parser.add_argument(
         "--pdf",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=False,
         help="Output the report in PDF format",
     )
+    parser.set_defaults(**read_config(config_args.config))
     args = parser.parse_args()
 
     data = read_csv(args.filename)
