@@ -50,10 +50,12 @@ def parse_duration(duration_str: str) -> dt.timedelta:
     return dt.timedelta(hours=hours, minutes=minutes, seconds=seconds)
 
 
-def format_duration(duration: dt.timedelta) -> str:
-    total_minutes = duration.total_seconds() // 60
-    hours, minutes = divmod(total_minutes, 60)
-    return f"{int(hours):02}:{int(minutes):02}"
+def format_duration(duration: dt.timedelta, include_seconds: bool = False) -> str:
+    hours, remainder = divmod(int(duration.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if include_seconds:
+        return f"{hours:02}:{minutes:02}:{seconds:02}"
+    return f"{hours:02}:{minutes:02}"
 
 
 def get_day_suffix(day: int) -> str:
@@ -180,6 +182,12 @@ def main() -> None:
         action="store_true",
         help="Hide the project column",
     )
+    parser.add_argument(
+        "--include-seconds",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Show durations as hh:mm:ss instead of hh:mm",
+    )
     parser.set_defaults(**read_config(config_args.config))
     args = parser.parse_args()
 
@@ -198,7 +206,8 @@ def main() -> None:
 
     table = PrettyTable()
     table.set_style(PrettyTableStyle.SINGLE_BORDER)
-    table.field_names = ["Date", "Project", "Area", "Task", "hh:mm"]
+    duration_header = "hh:mm:ss" if args.include_seconds else "hh:mm"
+    table.field_names = ["Date", "Project", "Area", "Task", duration_header]
 
     total_duration = dt.timedelta()
     for start_date, clients in sorted(grouped.items()):
@@ -212,7 +221,7 @@ def main() -> None:
                             client,
                             project,
                             task,
-                            format_duration(duration),
+                            format_duration(duration, args.include_seconds),
                         ]
                     )
                     total_duration += duration
@@ -220,7 +229,9 @@ def main() -> None:
         table.add_divider()
 
     # Add total row
-    table.add_row(["Total", "", "", "", format_duration(total_duration)])
+    table.add_row(
+        ["Total", "", "", "", format_duration(total_duration, args.include_seconds)]
+    )
 
     if args.no_project:
         table.del_column("Project")
