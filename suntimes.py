@@ -2,8 +2,11 @@
 """
 Dawn, sunrise, noon, sunset and dusk times for the given years.
 """
+
+from __future__ import annotations
+
 import argparse
-import datetime
+import datetime as dt
 import json
 import os
 
@@ -19,10 +22,11 @@ def mkdir(directory):
 
 def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
-    if isinstance(obj, datetime.datetime) or isinstance(obj, datetime.date):
+    if isinstance(obj, dt.datetime) or isinstance(obj, dt.date):
         serial = obj.isoformat()
         return serial
-    raise TypeError("Type not serializable")
+    msg = "Type not serializable"
+    raise TypeError(msg)
 
 
 def sunyears(start_year, end_year):
@@ -40,12 +44,12 @@ def sunyears(start_year, end_year):
 
     print(f" Latitude: {city.latitude:.02f}; Longitude: {city.longitude:.02f}\n")
 
-    delta = datetime.timedelta(days=1)
+    delta = dt.timedelta(days=1)
 
     for year in range(start_year, end_year + 1):
         # Loop through all days in year
-        start_date = datetime.date(year, 1, 1)
-        end_date = datetime.date(year, 12, 31)
+        start_date = dt.date(year, 1, 1)
+        end_date = dt.date(year, 12, 31)
         d = start_date
         while d <= end_date:
 

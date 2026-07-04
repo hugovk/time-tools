@@ -10,14 +10,16 @@ uv run timesheet.py Toggl_time_entries_2025-01-01_to_2025-01-31.csv
 uv run timesheet.py Toggl_time_entries_2025-01-01_to_2025-01-31.csv --pdf
 """
 
+from __future__ import annotations
+
 import argparse
 import csv
 import datetime as dt
-import tomllib
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import tomllib
 from prettytable import PrettyTable
 from prettytable import TableStyle as PrettyTableStyle
 
@@ -51,10 +53,12 @@ def parse_duration(duration_str: str) -> dt.timedelta:
 
 
 def format_duration(duration: dt.timedelta, include_seconds: bool = False) -> str:
-    hours, remainder = divmod(int(duration.total_seconds()), 3600)
-    minutes, seconds = divmod(remainder, 60)
     if include_seconds:
+        hours, remainder = divmod(int(duration.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
         return f"{hours:02}:{minutes:02}:{seconds:02}"
+    total_minutes = round(duration.total_seconds() / 60)
+    hours, minutes = divmod(total_minutes, 60)
     return f"{hours:02}:{minutes:02}"
 
 
@@ -101,7 +105,10 @@ def create_pdf(table: PrettyTable, filename: str, name: str) -> None:
     elements.append(Paragraph(f"{last_month_name} Timesheet", title_style_26pt))
     elements.append(Spacer(1, 6))
     current_date = dt.datetime.now()
-    formatted_date = f"{current_date.day}{get_day_suffix(current_date.day)} {current_date.strftime('%B %Y')}"
+    formatted_date = (
+        f"{current_date.day}{get_day_suffix(current_date.day)} "
+        f"{current_date.strftime('%B %Y')}"
+    )
     elements.append(
         Paragraph(
             f"Sovereign Tech Fellowship, {name}, {formatted_date}",
