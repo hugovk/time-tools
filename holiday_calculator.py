@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import argparse
 import calendar
-# from pprint import pprint
 
+# from pprint import pprint
 import holidays
 from termcolor import colored
 
@@ -33,7 +35,7 @@ if __name__ == "__main__":
         print(f"{country}:")
 
         for date, name in sorted(h.items()):
-            if date.weekday() in range(0, 5):
+            if date.weekday() in range(5):
                 colour = "green"
                 weekday_total += 1
             else:
