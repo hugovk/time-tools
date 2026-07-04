@@ -53,9 +53,9 @@ def parse_duration(duration_str: str) -> dt.timedelta:
 
 
 def format_duration(duration: dt.timedelta) -> str:
-    total_minutes = duration.total_seconds() // 60
+    total_minutes = round(duration.total_seconds() / 60)
     hours, minutes = divmod(total_minutes, 60)
-    return f"{int(hours):02}:{int(minutes):02}"
+    return f"{hours:02}:{minutes:02}"
 
 
 def get_day_suffix(day: int) -> str:
