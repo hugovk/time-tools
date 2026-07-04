@@ -65,7 +65,9 @@ def get_day_suffix(day: int) -> str:
         return ["st", "nd", "rd"][day % 10 - 1]
 
 
-def create_pdf(table: PrettyTable, filename: str, name: str) -> None:
+def create_pdf(
+    table: PrettyTable, filename: str, name: str, key: dict[str, str]
+) -> None:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -144,6 +146,29 @@ def create_pdf(table: PrettyTable, filename: str, name: str) -> None:
 
     pdf_table.setStyle(style)
 
+    # Add the key
+    if key:
+        key_data = [["Key", ""]] + [[code, desc] for code, desc in key.items()]
+        key_table = Table(key_data)
+        key_table.setStyle(
+            TableStyle(
+                [
+                    ("SPAN", (0, 0), (-1, 0)),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.beige),
+                    ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+                    ("BOX", (0, 0), (-1, -1), 1, colors.black),
+                    ("LINEBELOW", (0, 0), (-1, 0), 1, colors.black),
+                ]
+            )
+        )
+        elements.append(key_table)
+        elements.append(Spacer(1, 16))
+
     # Add the table to the elements
     elements.append(pdf_table)
 
@@ -164,6 +189,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Read in a CSV file and produce a report showing daily reports",
         parents=[config_parser],
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.color = True
     parser.add_argument("filename", help="CSV file to read")
@@ -185,7 +211,9 @@ def main() -> None:
         action="store_true",
         help="Hide the project column",
     )
-    parser.set_defaults(**read_config(config_args.config))
+    config = read_config(config_args.config)
+    key = config.pop("key", {})
+    parser.set_defaults(**config)
     args = parser.parse_args()
 
     data = read_csv(args.filename)
@@ -229,14 +257,30 @@ def main() -> None:
 
     if args.no_project:
         table.del_column("Project")
+
+    key_table = None
+    if key:
+        key_table = PrettyTable()
+        key_table.set_style(PrettyTableStyle.SINGLE_BORDER)
+        key_table.title = "Key"
+        key_table.header = False
+        key_table.align = "l"
+        for code, description in key.items():
+            key_table.add_row([code, description])
+
     if args.html:
+        if key_table:
+            print(key_table.get_html_string())
         print(table.get_html_string())
     elif args.pdf:
         # save as yyyy-mm-STF-timesheet.pdf where yyyy-mm is the last month
         last_month = dt.datetime.now().replace(day=1) - dt.timedelta(days=1)
         filename = f"{last_month.strftime('%Y-%m')}-STF-timesheet.pdf"
-        create_pdf(table, filename, args.name)
+        create_pdf(table, filename, args.name, key)
     else:
+        if key_table:
+            print(key_table)
+            print()
         print(table)
 
 
