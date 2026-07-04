@@ -65,6 +65,17 @@ def get_day_suffix(day: int) -> str:
         return ["st", "nd", "rd"][day % 10 - 1]
 
 
+def make_key_table(key: dict[str, str]) -> PrettyTable:
+    key_table = PrettyTable()
+    key_table.set_style(PrettyTableStyle.SINGLE_BORDER)
+    key_table.title = "Key"
+    key_table.header = False
+    key_table.align = "l"
+    for code, description in key.items():
+        key_table.add_row([code, description])
+    return key_table
+
+
 def create_pdf(
     table: PrettyTable, filename: str, name: str, key: dict[str, str]
 ) -> None:
@@ -258,19 +269,9 @@ def main() -> None:
     if args.no_project:
         table.del_column("Project")
 
-    key_table = None
-    if key:
-        key_table = PrettyTable()
-        key_table.set_style(PrettyTableStyle.SINGLE_BORDER)
-        key_table.title = "Key"
-        key_table.header = False
-        key_table.align = "l"
-        for code, description in key.items():
-            key_table.add_row([code, description])
-
     if args.html:
-        if key_table:
-            print(key_table.get_html_string())
+        if key:
+            print(make_key_table(key).get_html_string())
         print(table.get_html_string())
     elif args.pdf:
         # save as yyyy-mm-STF-timesheet.pdf where yyyy-mm is the last month
@@ -278,8 +279,8 @@ def main() -> None:
         filename = f"{last_month.strftime('%Y-%m')}-STF-timesheet.pdf"
         create_pdf(table, filename, args.name, key)
     else:
-        if key_table:
-            print(key_table)
+        if key:
+            print(make_key_table(key))
             print()
         print(table)
 
