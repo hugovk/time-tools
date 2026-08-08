@@ -244,7 +244,7 @@ def main() -> None:
     table.set_style(PrettyTableStyle.SINGLE_BORDER)
     table.field_names = ["Date", "Project", "Area", "Task", "hh:mm"]
 
-    total_duration = dt.timedelta()
+    total_minutes = 0
     for start_date, clients in sorted(grouped.items()):
         date = start_date.strftime("%Y-%m-%d")
         for client, projects in sorted(clients.items(), key=lambda x: x[0].lower()):
@@ -259,12 +259,14 @@ def main() -> None:
                             format_duration(duration),
                         ]
                     )
-                    total_duration += duration
+                    total_minutes += round(duration.total_seconds() / 60)
                     date = ""
         table.add_divider()
 
     # Add total row
-    table.add_row(["Total", "", "", "", format_duration(total_duration)])
+    table.add_row(
+        ["Total", "", "", "", format_duration(dt.timedelta(minutes=total_minutes))]
+    )
 
     if args.no_project:
         table.del_column("Project")
