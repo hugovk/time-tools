@@ -141,7 +141,7 @@ def create_pdf(
             ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
             ("BACKGROUND", (0, 1), (-1, -1), colors.beige),
             ("GRID", (0, 0), (-1, 0), 1, colors.black),  # Header row grid
-            ("LINEABOVE", (0, -1), (-1, -1), 1, colors.black),
+            ("LINEABOVE", (0, -2), (-1, -2), 1, colors.black),
             # Underline above total row
         ]
     )
@@ -267,6 +267,7 @@ def main() -> None:
     table.add_row(
         ["Total", "", "", "", format_duration(dt.timedelta(minutes=total_minutes))]
     )
+    table.add_row(["", "", "", "", f"{total_minutes / 60:.2f}"])
 
     if args.no_project:
         table.del_column("Project")
