@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import datetime as dt
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +13,9 @@ from timesheet import (
     format_hms,
     format_hours,
     get_day_suffix,
+    month_range,
+    previous_month_carry,
+    previous_month_file,
     round_minutes,
     task_key,
     week_label,
@@ -38,6 +43,15 @@ def make_row(
         "Client": client,
         "Project": project,
     }
+
+
+def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=["Description", "Duration", "Start date", "Client", "Project"]
+        )
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 class TestRoundMinutes:
@@ -153,6 +167,46 @@ class TestWeekLabel:
         assert week_label(week, dt.date(2026, 8, 1), dt.date(2026, 8, 31)) == expected
 
 
+class TestMonthRange:
+    @pytest.mark.parametrize(
+        "filename, expected",
+        [
+            ("toggl-2026-08.csv", (dt.date(2026, 8, 1), dt.date(2026, 8, 31))),
+            ("toggl-2026-02.csv", (dt.date(2026, 2, 1), dt.date(2026, 2, 28))),
+            ("toggl-2026-12.csv", (dt.date(2026, 12, 1), dt.date(2026, 12, 31))),
+        ],
+    )
+    def test_month_bounds(
+        self, filename: str, expected: tuple[dt.date, dt.date]
+    ) -> None:
+        assert month_range(Path(filename)) == expected
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "toggl-2026-08-32h.csv",
+            "Toggl_time_entries_2026-08-01_to_2026-08-31.csv",
+        ],
+    )
+    def test_other_filenames(self, filename: str) -> None:
+        assert month_range(Path(filename)) is None
+
+
+class TestPreviousMonthFile:
+    @pytest.mark.parametrize(
+        "filename, expected",
+        [
+            ("toggl-2026-08.csv", "toggl-2026-07.csv"),
+            ("toggl-2026-01.csv", "toggl-2025-12.csv"),  # year wraps
+        ],
+    )
+    def test_previous_month(self, filename: str, expected: str) -> None:
+        assert previous_month_file(Path(filename)) == Path(expected)
+
+    def test_other_filename(self) -> None:
+        assert previous_month_file(Path("august.csv")) is None
+
+
 class TestTaskKey:
     def test_groups_by_date_client_project_and_task(self) -> None:
         # Arrange
@@ -192,6 +246,28 @@ class TestWeekMinutes:
             dt.date(2026, 8, 3): 60,
             dt.date(2026, 8, 10): 120,
         }
+
+
+class TestPreviousMonthCarry:
+    def test_counts_only_overlapping_weeks(self, tmp_path: Path) -> None:
+        # Arrange
+        # 2026-07-30 is in the week of Mon 2026-07-27, which overlaps August;
+        # 2026-07-20 starts an earlier, non-overlapping week
+        prev = tmp_path / "toggl-2026-07.csv"
+        write_csv(
+            prev,
+            [
+                make_row("2026-07-20", "8:00:00"),
+                make_row("2026-07-30", "2:00:00"),
+                make_row("2026-07-30", "1:00:30", task="Task B"),
+            ],
+        )
+
+        # Act
+        carry = previous_month_carry(prev, {dt.date(2026, 7, 27)})
+
+        # Assert
+        assert carry == {dt.date(2026, 7, 27): 180}
 
 
 class TestCapWeeklyHours:
@@ -314,6 +390,28 @@ class TestCapWeeklyHours:
 
         # Assert
         assert data[0]["Duration"] == "33:00:00"
+
+    def test_carry_consumes_cap(self) -> None:
+        # Arrange
+        # 2026-08-01 is the Saturday of the week starting Mon 2026-07-27
+        data = [make_row("2026-08-01", "4:00:00")]
+        carry = {dt.date(2026, 7, 27): 30 * 60}
+
+        # Act
+        capped = cap_weekly_hours(data, 32, carry)
+
+        # Assert
+        assert [(row["Start date"], row["Duration"]) for row in capped] == [
+            ("2026-08-01", "2:00:00")
+        ]
+
+    def test_carry_over_cap_drops_week(self) -> None:
+        # Arrange
+        data = [make_row("2026-08-01", "1:00:00")]
+        carry = {dt.date(2026, 7, 27): 33 * 60}
+
+        # Act / Assert
+        assert cap_weekly_hours(data, 32, carry) == []
 
 
 class TestGetDaySuffix:

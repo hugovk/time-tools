@@ -114,6 +114,26 @@ def week_label(week: dt.date, first: dt.date, last: dt.date) -> str:
     return f"{start} - {end}"
 
 
+def month_range(path: Path) -> tuple[dt.date, dt.date] | None:
+    """First and last day of the month in a toggl-YYYY-MM.csv filename"""
+    try:
+        year, month = (int(p) for p in path.stem.removeprefix("toggl-").split("-"))
+        first = dt.date(year, month, 1)
+    except ValueError:
+        return None
+    next_first = (first + dt.timedelta(days=31)).replace(day=1)
+    return first, next_first - dt.timedelta(days=1)
+
+
+def previous_month_file(path: Path) -> Path | None:
+    """toggl-2026-08.csv -> toggl-2026-07.csv, whether or not it exists"""
+    bounds = month_range(path)
+    if bounds is None:
+        return None
+    last_of_prev = bounds[0] - dt.timedelta(days=1)
+    return path.with_name(f"toggl-{last_of_prev:%Y-%m}.csv")
+
+
 def task_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
     """Task-row grouping used for the report"""
     return (row["Start date"], row["Client"], row["Project"], row["Description"])
@@ -130,25 +150,39 @@ def week_minutes(data: list[dict[str, Any]]) -> dict[dt.date, int]:
     return dict(minutes)
 
 
+def previous_month_carry(prev: Path, weeks: set[dt.date]) -> dict[dt.date, int]:
+    """Minutes from the previous month's CSV falling in this month's weeks:
+    they consume the weekly cap but are not included in the report
+    """
+    prev_rows = [
+        row
+        for row in read_csv(str(prev))
+        if week_start(dt.date.fromisoformat(row["Start date"])) in weeks
+    ]
+    return week_minutes(prev_rows)
+
+
 def cap_weekly_hours(
-    data: list[dict[str, Any]], max_hours: int
+    data: list[dict[str, Any]], max_hours: int, carry: dict[dt.date, int] | None = None
 ) -> list[dict[str, Any]]:
     """Cap each Mon-Sun week so its rounded task rows sum to at most the cap:
     keep entries chronologically, trim the entry crossing the cap so its
     task row lands on the remaining whole minutes, drop the rest
     """
     cap = max_hours * 60
+    carry = carry or {}
     kept_groups: dict[tuple[str, str, str, str], dt.timedelta] = {}
     kept: dict[dt.date, int] = {}
     output = []
     for row in sorted(data, key=lambda r: r["Start date"]):
         week = week_start(dt.date.fromisoformat(row["Start date"]))
+        budget = cap - carry.get(week, 0)
         key = task_key(row)
         group = kept_groups.get(key, dt.timedelta())
         others = kept.get(week, 0) - round_minutes(group)
         duration = parse_duration(row["Duration"])
-        if others + round_minutes(group + duration) > cap:
-            duration = dt.timedelta(minutes=cap - others) - group
+        if others + round_minutes(group + duration) > budget:
+            duration = dt.timedelta(minutes=budget - others) - group
             if duration <= dt.timedelta():
                 continue
         kept_groups[key] = group + duration
@@ -158,13 +192,34 @@ def cap_weekly_hours(
 
 
 def print_weekly_hours(
-    title: str, minutes: dict[dt.date, int], cap: int, first: dt.date, last: dt.date
+    title: str,
+    minutes: dict[dt.date, int],
+    cap: int,
+    first: dt.date,
+    last: dt.date,
+    carry: dict[dt.date, int],
+    carry_note: str,
 ) -> None:
-    """Print hours per Mon-Sun week, red where over the cap in minutes"""
+    """Print hours per Mon-Sun week, red where over the cap in minutes.
+
+    A week also found in carry gets a yellow row for the previous month's
+    part, with {total} in carry_note replaced by the whole week's h:mm.
+    """
     header = f"{'Wk':<4}{title:<25}{'h:mm':>8}{'hh.dd':>8}"
     print(colored(header, attrs=["bold"]))
     for week in sorted(minutes):
-        over = minutes[week] > cap
+        if week in carry:
+            note = carry_note.format(total=format_hhmm(minutes[week] + carry[week]))
+            label = week_label(week, week, first - dt.timedelta(days=1))
+            print(
+                colored(
+                    f"{week_number(week):<4}{label:<25}"
+                    f"{format_hours(carry[week])}  {note}",
+                    "yellow",
+                )
+            )
+            print()
+        over = minutes[week] + carry.get(week, 0) > cap
         print(
             f"{week_number(week):<4}{week_label(week, first, last):<25}"
             + colored(format_hours(minutes[week]), "red" if over else "green")
@@ -377,10 +432,14 @@ def main() -> None:
     data = read_csv(args.filename)
 
     totals = {}
+    carry = {}
     if args.weekly_max_hours and data:
         dates = [dt.date.fromisoformat(row["Start date"]) for row in data]
         totals = week_minutes(data)
-        data = cap_weekly_hours(data, args.weekly_max_hours)
+        prev_file = previous_month_file(Path(args.filename))
+        if prev_file and prev_file.exists():
+            carry = previous_month_carry(prev_file, set(totals))
+        data = cap_weekly_hours(data, args.weekly_max_hours, carry)
 
     # Group each day by client, project, and task,
     # and show the total duration for each task.
@@ -444,9 +503,37 @@ def main() -> None:
         cap = args.weekly_max_hours * 60
         first, last = min(dates), max(dates)
         print()
-        print_weekly_hours("Week (Mon-Sun)", totals, cap, first, last)
+        if carry:
+            print(colored(f"Carrying over hours from {prev_file.name}", "yellow"))
+            print()
+        elif prev_file and not prev_file.exists():
+            print(
+                colored(
+                    f"No previous month file found ({prev_file.name}), "
+                    "first week gets the full cap",
+                    "yellow",
+                )
+            )
+            print()
+        print_weekly_hours(
+            "Week (Mon-Sun)",
+            totals,
+            cap,
+            first,
+            last,
+            carry,
+            "(counted toward cap but ignored in totals)",
+        )
         print()
-        print_weekly_hours("Capped week", week_minutes(data), cap, first, last)
+        print_weekly_hours(
+            "Capped week",
+            week_minutes(data),
+            cap,
+            first,
+            last,
+            carry,
+            "(counted toward cap: week total {total})",
+        )
 
 
 if __name__ == "__main__":
