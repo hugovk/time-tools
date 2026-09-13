@@ -15,9 +15,11 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape
 
 import tomllib
 from prettytable import PrettyTable
@@ -31,6 +33,18 @@ from prettytable import TableStyle as PrettyTableStyle
 #   "rich",
 # ]
 # ///
+
+
+# GitHub references like "python/cpython#156181"
+GITHUB_REF = re.compile(r"(?<![\w/])([A-Za-z0-9][\w.-]*/[\w.-]+)#(\d+)\b")
+
+
+def linkify_github(text: str) -> str:
+    """Mark up GitHub references as links for a reportlab Paragraph."""
+    link = (
+        r'<link href="https://github.com/\1/issues/\2" color="blue"><u>\1#\2</u></link>'
+    )
+    return GITHUB_REF.sub(link, escape(text))
 
 
 def read_config(filename: str) -> dict[str, Any]:
@@ -77,11 +91,17 @@ def make_key_table(key: dict[str, str]) -> PrettyTable:
 
 
 def create_pdf(
-    table: PrettyTable, filename: str, name: str, key: dict[str, str]
+    table: PrettyTable,
+    filename: str,
+    name: str,
+    key: dict[str, str],
+    linkify_github_refs: bool = False,
 ) -> None:
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.platypus import (
         Paragraph,
         SimpleDocTemplate,
@@ -126,10 +146,23 @@ def create_pdf(
     )
 
     # Convert PrettyTable to list of lists
-    table_data = [table.field_names] + table.rows
+    table_data = [list(table.field_names)] + [list(row) for row in table.rows]
+
+    # Make GitHub references in the tasks clickable
+    col = table_data[0].index("Task")
+    tasks = [row[col] for row in table_data[1:]]
+    widths = [None] * len(table_data[0])
+    if linkify_github_refs and any(GITHUB_REF.search(task) for task in tasks):
+        task_style = ParagraphStyle(
+            "Task", fontName="Helvetica", fontSize=10, alignment=TA_CENTER
+        )
+        # Pin the width, else reportlab shrinks the column to its longest word
+        widths[col] = 12 + max(stringWidth(t, "Helvetica", 10) for t in tasks)
+        for row in table_data[1:]:
+            row[col] = Paragraph(linkify_github(row[col]), task_style)
 
     # Create a table with the data
-    pdf_table = Table(table_data, repeatRows=1)
+    pdf_table = Table(table_data, colWidths=widths, repeatRows=1)
 
     # Set the style for the table
     style = TableStyle(
@@ -222,6 +255,12 @@ def main() -> None:
         action="store_true",
         help="Hide the project column",
     )
+    parser.add_argument(
+        "--linkify-github-refs",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Link GitHub references like 'org/repo#123' in the PDF",
+    )
     config = read_config(config_args.config)
     key = config.pop("key", {})
     parser.set_defaults(**config)
@@ -280,7 +319,7 @@ def main() -> None:
         # save as yyyy-mm-STF-timesheet.pdf where yyyy-mm is the last month
         last_month = dt.datetime.now().replace(day=1) - dt.timedelta(days=1)
         filename = f"{last_month.strftime('%Y-%m')}-STF-timesheet.pdf"
-        create_pdf(table, filename, args.name, key)
+        create_pdf(table, filename, args.name, key, args.linkify_github_refs)
     else:
         if key:
             print(make_key_table(key))
