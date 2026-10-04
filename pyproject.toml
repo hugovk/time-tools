@@ -1,3 +1,10 @@
+[dependency-groups]
+tests = [
+  "prettytable>=3.14",
+  "pytest>=9",
+  "pytest-cov",
+]
+
 [tool.black]
 target_version = [ "py311" ]
 
@@ -35,3 +42,16 @@ lint.isort.required-imports = [ "from __future__ import annotations" ]
 
 [tool.pyproject-fmt]
 generate_python_version_classifiers = false
+
+[tool.pytest]
+minversion = "9.0"
+testpaths = [ "tests" ]
+
+[tool.coverage]
+run.disable_warnings = [ "no-sysmon" ]  # 3.11
+run.core = "sysmon"  # default for 3.14+, available for 3.12+
+# Regexes for lines to exclude from consideration
+report.exclude_also = [
+  # Don't complain if non-runnable code isn't run:
+  "if __name__ == .__main__.:",
+]
