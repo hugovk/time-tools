@@ -453,7 +453,7 @@ def main() -> None:
                             format_duration(duration),
                         ]
                     )
-                    total_minutes += round(duration.total_seconds() / 60)
+                    total_minutes += round_minutes(duration)
                     date = ""
         table.add_divider()
 
