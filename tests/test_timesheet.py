@@ -11,6 +11,7 @@ from timesheet import (
     get_day_suffix,
     month_range,
     round_minutes,
+    split_by_period,
     task_key,
     week_label,
     week_minutes,
@@ -162,6 +163,26 @@ class TestTaskKey:
 
         # Assert
         assert key == ("2026-08-03", "Client A", "Project A", "Task A")
+
+
+class TestSplitByPeriod:
+    def test_splits_on_inclusive_bounds(self) -> None:
+        # Arrange
+        data = [
+            make_row("2026-08-31", "1:00:00"),
+            make_row("2026-09-01", "1:00:00"),
+            make_row("2026-09-30", "1:00:00"),
+            make_row("2026-10-01", "1:00:00"),
+        ]
+
+        # Act
+        inside, outside = split_by_period(
+            data, dt.date(2026, 9, 1), dt.date(2026, 9, 30)
+        )
+
+        # Assert
+        assert [row["Start date"] for row in inside] == ["2026-09-01", "2026-09-30"]
+        assert [row["Start date"] for row in outside] == ["2026-08-31", "2026-10-01"]
 
 
 class TestWeekMinutes:

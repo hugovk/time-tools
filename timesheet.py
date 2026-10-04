@@ -16,6 +16,7 @@ import argparse
 import csv
 import datetime as dt
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -110,6 +111,17 @@ def month_range(path: Path) -> tuple[dt.date, dt.date] | None:
         return None
     next_first = (first + dt.timedelta(days=31)).replace(day=1)
     return first, next_first - dt.timedelta(days=1)
+
+
+def split_by_period(
+    data: list[dict[str, Any]], first: dt.date, last: dt.date
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split rows into those dated within first..last inclusive, and the rest"""
+    inside, outside = [], []
+    for row in data:
+        date = dt.date.fromisoformat(row["Start date"])
+        (inside if first <= date <= last else outside).append(row)
+    return inside, outside
 
 
 def task_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -389,10 +401,26 @@ def main() -> None:
 
     data = read_csv(args.filename)
 
+    # Report only the month named in the filename, warning about the rest
+    month = month_range(Path(args.filename))
+    if month:
+        data, outside = split_by_period(data, *month)
+        if outside:
+            print(
+                f"Warning: ignoring {len(outside)} "
+                f"{'entry' if len(outside) == 1 else 'entries'} outside "
+                f"{month[0]:%B %Y} in {args.filename}:",
+                file=sys.stderr,
+            )
+            for row in outside:
+                print(
+                    f"  {row['Start date']}  {row['Duration']:>8}  "
+                    f"{row['Description']}",
+                    file=sys.stderr,
+                )
+
     dates = [dt.date.fromisoformat(row["Start date"]) for row in data]
-    period = month_range(Path(args.filename)) or (
-        (min(dates), max(dates)) if dates else None
-    )
+    period = month or ((min(dates), max(dates)) if dates else None)
     weekly = week_minutes(data)
 
     # Group each day by client, project, and task,
