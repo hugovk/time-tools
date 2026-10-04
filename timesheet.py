@@ -384,6 +384,12 @@ def main() -> None:
         help="Output the report in PDF format",
     )
     parser.add_argument(
+        "--hours-per-week",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Show a table of hours per week",
+    )
+    parser.add_argument(
         "--no-project",
         action="store_true",
         help="Hide the project column",
@@ -475,8 +481,10 @@ def main() -> None:
     if args.no_project:
         table.del_column("Project")
 
+    show_weekly = args.hours_per_week and weekly and period
+
     if args.html:
-        if weekly and period:
+        if show_weekly:
             print(make_weekly_table(weekly, *period).get_html_string())
         if key:
             print(make_key_table(key).get_html_string())
@@ -492,11 +500,11 @@ def main() -> None:
             args.name,
             key,
             args.linkify_github_refs,
-            weekly=weekly,
+            weekly=weekly if show_weekly else None,
             period=period,
         )
     else:
-        if weekly and period:
+        if show_weekly:
             print(make_weekly_table(weekly, *period))
             print()
         if key:
