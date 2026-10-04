@@ -3,6 +3,7 @@ tests = [
   "prettytable>=3.14",
   "pytest>=9",
   "pytest-cov",
+  "termcolor",
 ]
 
 [tool.black]

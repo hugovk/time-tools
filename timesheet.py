@@ -24,6 +24,7 @@ from xml.sax.saxutils import escape
 import tomllib
 from prettytable import PrettyTable
 from prettytable import TableStyle as PrettyTableStyle
+from termcolor import colored
 
 TYPE_CHECKING = False
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 #   "prettytable>=3.14",
 #   "reportlab",
 #   "rich",
+#   "termcolor",
 # ]
 # ///
 
@@ -80,9 +82,20 @@ def format_duration(duration: dt.timedelta) -> str:
     return f"{hours:02}:{minutes:02}"
 
 
+def format_hms(duration: dt.timedelta) -> str:
+    """Format a timedelta as H:MM:SS, as in the Toggl CSV"""
+    total = int(duration.total_seconds())
+    return f"{total // 3600}:{total % 3600 // 60:02}:{total % 60:02}"
+
+
 def format_hhmm(minutes: int) -> str:
     """Format whole minutes as h:mm"""
     return f"{minutes // 60}:{minutes % 60:02}"
+
+
+def format_hours(minutes: int) -> str:
+    """Format whole minutes as 'h:mm  hh.dd' table columns"""
+    return f"{format_hhmm(minutes):>8}{minutes / 60:>8.2f}"
 
 
 def week_start(date: dt.date) -> dt.date:
@@ -138,6 +151,49 @@ def week_minutes(data: list[dict[str, Any]]) -> dict[dt.date, int]:
     for key, duration in groups.items():
         minutes[week_start(dt.date.fromisoformat(key[0]))] += round_minutes(duration)
     return dict(minutes)
+
+
+def cap_weekly_hours(
+    data: list[dict[str, Any]], max_hours: int
+) -> list[dict[str, Any]]:
+    """Cap each Mon-Sun week so its rounded task rows sum to at most the cap:
+    keep entries chronologically, trim the entry crossing the cap so its
+    task row lands on the remaining whole minutes, drop the rest
+    """
+    cap = max_hours * 60
+    kept_groups: dict[tuple[str, str, str, str], dt.timedelta] = {}
+    kept: dict[dt.date, int] = {}
+    output = []
+    for row in sorted(data, key=lambda r: r["Start date"]):
+        week = week_start(dt.date.fromisoformat(row["Start date"]))
+        key = task_key(row)
+        group = kept_groups.get(key, dt.timedelta())
+        others = kept.get(week, 0) - round_minutes(group)
+        duration = parse_duration(row["Duration"])
+        if others + round_minutes(group + duration) > cap:
+            duration = dt.timedelta(minutes=cap - others) - group
+            if duration <= dt.timedelta():
+                continue
+        kept_groups[key] = group + duration
+        kept[week] = others + round_minutes(kept_groups[key])
+        output.append(row | {"Duration": format_hms(duration)})
+    return output
+
+
+def print_weekly_hours(
+    title: str, minutes: dict[dt.date, int], cap: int, first: dt.date, last: dt.date
+) -> None:
+    """Print hours per Mon-Sun week, red where over the cap in minutes"""
+    header = f"{'Wk':<4}{title:<25}{'h:mm':>8}{'hh.dd':>8}"
+    print(colored(header, attrs=["bold"]))
+    for week in sorted(minutes):
+        over = minutes[week] > cap
+        print(
+            f"{week_number(week):<4}{week_label(week, first, last):<25}"
+            + colored(format_hours(minutes[week]), "red" if over else "green")
+        )
+    total = f"{'Total':<29}{format_hours(sum(minutes.values()))}"
+    print(colored(total, attrs=["bold"]))
 
 
 def get_day_suffix(day: int) -> str:
@@ -372,6 +428,13 @@ def main() -> None:
     parser.add_argument("filename", help="CSV file to read")
     parser.add_argument("-n", "--name", default="Hugo van Kemenade", help="Your name")
     parser.add_argument(
+        "--weekly-max-hours",
+        metavar="HOURS",
+        type=int,
+        default=32,
+        help="Cap each Mon-Sun week at this many hours (0 to disable)",
+    )
+    parser.add_argument(
         "--html",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -425,8 +488,12 @@ def main() -> None:
                     file=sys.stderr,
                 )
 
+    totals = {}
     dates = [dt.date.fromisoformat(row["Start date"]) for row in data]
     period = month or ((min(dates), max(dates)) if dates else None)
+    if args.weekly_max_hours and data:
+        totals = week_minutes(data)
+        data = cap_weekly_hours(data, args.weekly_max_hours)
     weekly = week_minutes(data)
 
     # Group each day by client, project, and task,
@@ -504,13 +571,22 @@ def main() -> None:
             period=period,
         )
     else:
-        if show_weekly:
+        # The capped weekly hours are printed in colour below instead
+        if show_weekly and not totals:
             print(make_weekly_table(weekly, *period))
             print()
         if key:
             print(make_key_table(key))
             print()
         print(table)
+
+    if totals and not args.html:
+        cap = args.weekly_max_hours * 60
+        first, last = min(dates), max(dates)
+        print()
+        print_weekly_hours("Week (Mon-Sun)", totals, cap, first, last)
+        print()
+        print_weekly_hours("Capped week", week_minutes(data), cap, first, last)
 
 
 if __name__ == "__main__":
