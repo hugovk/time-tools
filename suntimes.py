@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 Dawn, sunrise, noon, sunset and dusk times for the given years.
 """
@@ -22,7 +21,7 @@ def mkdir(directory):
 
 def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
-    if isinstance(obj, dt.datetime) or isinstance(obj, dt.date):
+    if isinstance(obj, (dt.datetime, dt.date)):
         serial = obj.isoformat()
         return serial
     msg = "Type not serializable"
