@@ -463,6 +463,15 @@ def main() -> None:
     )
     table.add_row(["", "", "", "", f"{total_minutes / 60:.2f}"])
 
+    # Both tables sum the same rounded task rows, so their totals must agree
+    weekly_total = sum(weekly.values())
+    if weekly_total != total_minutes:
+        msg = (
+            f"Hours per week total {format_hhmm(weekly_total)} does not match "
+            f"task table total {format_hhmm(total_minutes)}"
+        )
+        raise ValueError(msg)
+
     if args.no_project:
         table.del_column("Project")
 
