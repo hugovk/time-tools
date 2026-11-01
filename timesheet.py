@@ -16,14 +16,18 @@ import argparse
 import csv
 import datetime as dt
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 from xml.sax.saxutils import escape
 
 import tomllib
 from prettytable import PrettyTable
 from prettytable import TableStyle as PrettyTableStyle
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from typing import Any
 
 # /// script
 # requires-python = ">=3.11"
@@ -66,10 +70,74 @@ def parse_duration(duration_str: str) -> dt.timedelta:
     return dt.timedelta(hours=hours, minutes=minutes, seconds=seconds)
 
 
+def round_minutes(duration: dt.timedelta) -> int:
+    """Round to the nearest minute, as task rows are displayed"""
+    return round(duration.total_seconds() / 60)
+
+
 def format_duration(duration: dt.timedelta) -> str:
-    total_minutes = round(duration.total_seconds() / 60)
-    hours, minutes = divmod(total_minutes, 60)
+    hours, minutes = divmod(round_minutes(duration), 60)
     return f"{hours:02}:{minutes:02}"
+
+
+def format_hhmm(minutes: int) -> str:
+    """Format whole minutes as h:mm"""
+    return f"{minutes // 60}:{minutes % 60:02}"
+
+
+def week_start(date: dt.date) -> dt.date:
+    """Monday of the week containing date"""
+    return date - dt.timedelta(days=date.weekday())
+
+
+def week_number(week: dt.date) -> int:
+    """ISO week number of the week containing date"""
+    return week.isocalendar().week
+
+
+def week_label(week: dt.date, first: dt.date, last: dt.date) -> str:
+    """Mon-Sun week range, clipped to the period being reported"""
+    start = max(week, first)
+    end = min(week + dt.timedelta(days=6), last)
+    return f"{start} - {end}"
+
+
+def month_range(path: Path) -> tuple[dt.date, dt.date] | None:
+    """First and last day of the month in a toggl-YYYY-MM.csv filename"""
+    try:
+        year, month = (int(p) for p in path.stem.removeprefix("toggl-").split("-"))
+        first = dt.date(year, month, 1)
+    except ValueError:
+        return None
+    next_first = (first + dt.timedelta(days=31)).replace(day=1)
+    return first, next_first - dt.timedelta(days=1)
+
+
+def split_by_period(
+    data: list[dict[str, Any]], first: dt.date, last: dt.date
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split rows into those dated within first..last inclusive, and the rest"""
+    inside, outside = [], []
+    for row in data:
+        date = dt.date.fromisoformat(row["Start date"])
+        (inside if first <= date <= last else outside).append(row)
+    return inside, outside
+
+
+def task_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
+    """Task-row grouping used for the report"""
+    return (row["Start date"], row["Client"], row["Project"], row["Description"])
+
+
+def week_minutes(data: list[dict[str, Any]]) -> dict[dt.date, int]:
+    """Weekly totals: sum of each task row's duration rounded to the minute"""
+    groups: dict[tuple[str, str, str, str], dt.timedelta] = defaultdict(dt.timedelta)
+    for row in data:
+        groups[task_key(row)] += parse_duration(row["Duration"])
+    minutes: dict[dt.date, int] = defaultdict(int)
+    for key, duration in groups.items():
+        minutes[week_start(dt.date.fromisoformat(key[0]))] += round_minutes(duration)
+    return dict(minutes)
 
 
 def get_day_suffix(day: int) -> str:
@@ -90,12 +158,51 @@ def make_key_table(key: dict[str, str]) -> PrettyTable:
     return key_table
 
 
+def weekly_table_data(
+    minutes: dict[dt.date, int], first: dt.date, last: dt.date
+) -> list[list[str]]:
+    """Rows for an hours-per-week table: header, one row per week, total"""
+    rows = [["Week", "Dates", "h:mm", "hh.dd"]]
+    rows += [
+        [
+            str(week_number(week)),
+            week_label(week, first, last),
+            format_hhmm(minutes[week]),
+            f"{minutes[week] / 60:.2f}",
+        ]
+        for week in sorted(minutes)
+    ]
+    total = sum(minutes.values())
+    rows.append(["", "Total", format_hhmm(total), f"{total / 60:.2f}"])
+    return rows
+
+
+def make_weekly_table(
+    minutes: dict[dt.date, int], first: dt.date, last: dt.date
+) -> PrettyTable:
+    header, *rows = weekly_table_data(minutes, first, last)
+    weekly_table = PrettyTable()
+    weekly_table.set_style(PrettyTableStyle.SINGLE_BORDER)
+    weekly_table.title = "Hours per week"
+    weekly_table.field_names = header
+    weekly_table.align["Dates"] = "l"
+    weekly_table.align["h:mm"] = "r"
+    weekly_table.align["hh.dd"] = "r"
+    for row in rows[:-1]:
+        weekly_table.add_row(row)
+    weekly_table.add_divider()
+    weekly_table.add_row(rows[-1])
+    return weekly_table
+
+
 def create_pdf(
     table: PrettyTable,
     filename: str,
     name: str,
     key: dict[str, str],
     linkify_github_refs: bool = False,
+    weekly: dict[dt.date, int] | None = None,
+    period: tuple[dt.date, dt.date] | None = None,
 ) -> None:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
@@ -114,7 +221,7 @@ def create_pdf(
     elements = []
 
     # Calculate the last month
-    current_date = dt.datetime.now()
+    current_date = dt.datetime.now().astimezone()
     last_month = current_date.replace(day=1) - dt.timedelta(days=1)
     last_month_name = last_month.strftime("%B %Y")
 
@@ -133,7 +240,6 @@ def create_pdf(
 
     elements.append(Paragraph(f"{last_month_name} Timesheet", title_style_26pt))
     elements.append(Spacer(1, 6))
-    current_date = dt.datetime.now()
     formatted_date = (
         f"{current_date.day}{get_day_suffix(current_date.day)} "
         f"{current_date.strftime('%B %Y')}"
@@ -189,6 +295,33 @@ def create_pdf(
             previous_date = current_date
 
     pdf_table.setStyle(style)
+
+    # Add the hours per week included in this timesheet,
+    # with week ranges clipped to the month being reported
+    if weekly and period:
+        weekly_data = [["Hours per week", "", "", ""]]
+        weekly_data += weekly_table_data(weekly, *period)
+        weekly_table = Table(weekly_data)
+        weekly_table.setStyle(
+            TableStyle(
+                [
+                    ("SPAN", (0, 0), (-1, 0)),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 1), "Helvetica-Bold"),
+                    ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+                    ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.beige),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("BOX", (0, 0), (-1, -1), 1, colors.black),
+                    ("LINEBELOW", (0, 0), (-1, 1), 1, colors.black),
+                    ("LINEABOVE", (0, -1), (-1, -1), 1, colors.black),
+                ]
+            )
+        )
+        elements.append(weekly_table)
+        elements.append(Spacer(1, 16))
 
     # Add the key
     if key:
@@ -251,6 +384,12 @@ def main() -> None:
         help="Output the report in PDF format",
     )
     parser.add_argument(
+        "--hours-per-week",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Show a table of hours per week",
+    )
+    parser.add_argument(
         "--no-project",
         action="store_true",
         help="Hide the project column",
@@ -268,13 +407,35 @@ def main() -> None:
 
     data = read_csv(args.filename)
 
+    # Report only the month named in the filename, warning about the rest
+    month = month_range(Path(args.filename))
+    if month:
+        data, outside = split_by_period(data, *month)
+        if outside:
+            print(
+                f"Warning: ignoring {len(outside)} "
+                f"{'entry' if len(outside) == 1 else 'entries'} outside "
+                f"{month[0]:%B %Y} in {args.filename}:",
+                file=sys.stderr,
+            )
+            for row in outside:
+                print(
+                    f"  {row['Start date']}  {row['Duration']:>8}  "
+                    f"{row['Description']}",
+                    file=sys.stderr,
+                )
+
+    dates = [dt.date.fromisoformat(row["Start date"]) for row in data]
+    period = month or ((min(dates), max(dates)) if dates else None)
+    weekly = week_minutes(data)
+
     # Group each day by client, project, and task,
     # and show the total duration for each task.
     grouped = defaultdict(
         lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dt.timedelta)))
     )
     for row in data:
-        start_date = dt.datetime.strptime(row["Start date"], "%Y-%m-%d")
+        start_date = dt.date.fromisoformat(row["Start date"])
         task = row["Description"]
         duration = parse_duration(row["Duration"])
         grouped[start_date][row["Client"]][row["Project"]][task] += duration
@@ -298,7 +459,7 @@ def main() -> None:
                             format_duration(duration),
                         ]
                     )
-                    total_minutes += round(duration.total_seconds() / 60)
+                    total_minutes += round_minutes(duration)
                     date = ""
         table.add_divider()
 
@@ -308,19 +469,44 @@ def main() -> None:
     )
     table.add_row(["", "", "", "", f"{total_minutes / 60:.2f}"])
 
+    # Both tables sum the same rounded task rows, so their totals must agree
+    weekly_total = sum(weekly.values())
+    if weekly_total != total_minutes:
+        msg = (
+            f"Hours per week total {format_hhmm(weekly_total)} does not match "
+            f"task table total {format_hhmm(total_minutes)}"
+        )
+        raise ValueError(msg)
+
     if args.no_project:
         table.del_column("Project")
 
+    show_weekly = args.hours_per_week and weekly and period
+
     if args.html:
+        if show_weekly:
+            print(make_weekly_table(weekly, *period).get_html_string())
         if key:
             print(make_key_table(key).get_html_string())
         print(table.get_html_string())
     elif args.pdf:
         # save as yyyy-mm-STF-timesheet.pdf where yyyy-mm is the last month
-        last_month = dt.datetime.now().replace(day=1) - dt.timedelta(days=1)
+        today = dt.datetime.now().astimezone()
+        last_month = today.replace(day=1) - dt.timedelta(days=1)
         filename = f"{last_month.strftime('%Y-%m')}-STF-timesheet.pdf"
-        create_pdf(table, filename, args.name, key, args.linkify_github_refs)
+        create_pdf(
+            table,
+            filename,
+            args.name,
+            key,
+            args.linkify_github_refs,
+            weekly=weekly if show_weekly else None,
+            period=period,
+        )
     else:
+        if show_weekly:
+            print(make_weekly_table(weekly, *period))
+            print()
         if key:
             print(make_key_table(key))
             print()
