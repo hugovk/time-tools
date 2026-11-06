@@ -129,14 +129,22 @@ def task_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
     return (row["Start date"], row["Client"], row["Project"], row["Description"])
 
 
-def week_minutes(data: list[dict[str, Any]]) -> dict[dt.date, int]:
-    """Weekly totals: sum of each task row's duration rounded to the minute"""
+def day_minutes(data: list[dict[str, Any]]) -> dict[dt.date, int]:
+    """Daily totals: sum of each task row's duration rounded to the minute"""
     groups: dict[tuple[str, str, str, str], dt.timedelta] = defaultdict(dt.timedelta)
     for row in data:
         groups[task_key(row)] += parse_duration(row["Duration"])
     minutes: dict[dt.date, int] = defaultdict(int)
     for key, duration in groups.items():
-        minutes[week_start(dt.date.fromisoformat(key[0]))] += round_minutes(duration)
+        minutes[dt.date.fromisoformat(key[0])] += round_minutes(duration)
+    return dict(minutes)
+
+
+def week_minutes(data: list[dict[str, Any]]) -> dict[dt.date, int]:
+    """Weekly totals: sum of each task row's duration rounded to the minute"""
+    minutes: dict[dt.date, int] = defaultdict(int)
+    for day, total in day_minutes(data).items():
+        minutes[week_start(day)] += total
     return dict(minutes)
 
 
@@ -156,6 +164,29 @@ def make_key_table(key: dict[str, str]) -> PrettyTable:
     for code, description in key.items():
         key_table.add_row([code, description])
     return key_table
+
+
+def daily_table_data(minutes: dict[dt.date, int]) -> list[list[str]]:
+    """Rows for an hours-per-day table: header, one row per day, total"""
+    rows = [["Day", "h:mm"]]
+    rows += [[str(day), format_hhmm(minutes[day])] for day in sorted(minutes)]
+    rows.append(["Total", format_hhmm(sum(minutes.values()))])
+    return rows
+
+
+def make_daily_table(minutes: dict[dt.date, int]) -> PrettyTable:
+    header, *rows = daily_table_data(minutes)
+    daily_table = PrettyTable()
+    daily_table.set_style(PrettyTableStyle.SINGLE_BORDER)
+    daily_table.title = "Hours per day"
+    daily_table.field_names = header
+    daily_table.align["Day"] = "l"
+    daily_table.align["h:mm"] = "r"
+    for row in rows[:-1]:
+        daily_table.add_row(row)
+    daily_table.add_divider()
+    daily_table.add_row(rows[-1])
+    return daily_table
 
 
 def weekly_table_data(
@@ -203,6 +234,7 @@ def create_pdf(
     linkify_github_refs: bool = False,
     weekly: dict[dt.date, int] | None = None,
     period: tuple[dt.date, dt.date] | None = None,
+    daily: dict[dt.date, int] | None = None,
 ) -> None:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
@@ -210,6 +242,7 @@ def create_pdf(
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.platypus import (
+        KeepTogether,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
@@ -296,6 +329,8 @@ def create_pdf(
 
     pdf_table.setStyle(style)
 
+    summaries = []
+
     # Add the hours per week included in this timesheet,
     # with week ranges clipped to the month being reported
     if weekly and period:
@@ -320,7 +355,65 @@ def create_pdf(
                 ]
             )
         )
-        elements.append(weekly_table)
+        summaries.append(weekly_table)
+
+    # Add the hours per day included in this timesheet
+    if daily:
+        daily_data = [["Hours per day", ""]]
+        daily_data += daily_table_data(daily)
+
+        # Shrink the rows if needed, so the list fits on the first page:
+        # the frame's height less its padding and the titles above
+        available = pdf.height - 12 - 1
+        for element in elements:
+            available -= element.wrap(pdf.width, pdf.height)[1]
+            available -= element.getSpaceBefore() + element.getSpaceAfter()
+        row_heights = [21] + [18] * (len(daily_data) - 1)
+        scale = min(1, available / sum(row_heights))
+
+        daily_table = Table(daily_data, rowHeights=[h * scale for h in row_heights])
+        daily_table.setStyle(
+            TableStyle(
+                [
+                    ("SPAN", (0, 0), (-1, 0)),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 1), "Helvetica-Bold"),
+                    ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+                    ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                    ("FONTSIZE", (0, 0), (-1, -1), min(10, 18 * scale - 3)),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.beige),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("BOX", (0, 0), (-1, -1), 1, colors.black),
+                    ("LINEBELOW", (0, 0), (-1, 1), 1, colors.black),
+                    ("LINEABOVE", (0, -1), (-1, -1), 1, colors.black),
+                ]
+            )
+        )
+        summaries.append(daily_table)
+
+    if len(summaries) > 1:
+        # Side by side, so both fit on the first page
+        gap = 16
+        widths = [summary.wrap(pdf.width, pdf.height)[0] + gap for summary in summaries]
+        summary_table = Table([summaries], colWidths=widths)
+        summary_table.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), gap / 2),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), gap / 2),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        summaries = [summary_table]
+    for summary in summaries:
+        elements.append(summary)
         elements.append(Spacer(1, 16))
 
     # Add the key
@@ -343,7 +436,8 @@ def create_pdf(
                 ]
             )
         )
-        elements.append(key_table)
+        # Don't split the key over a page break
+        elements.append(KeepTogether(key_table))
         elements.append(Spacer(1, 16))
 
     # Add the table to the elements
@@ -390,6 +484,12 @@ def main() -> None:
         help="Show a table of hours per week",
     )
     parser.add_argument(
+        "--hours-per-day",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Show a table of hours per day",
+    )
+    parser.add_argument(
         "--no-project",
         action="store_true",
         help="Hide the project column",
@@ -427,6 +527,7 @@ def main() -> None:
 
     dates = [dt.date.fromisoformat(row["Start date"]) for row in data]
     period = month or ((min(dates), max(dates)) if dates else None)
+    daily = day_minutes(data)
     weekly = week_minutes(data)
 
     # Group each day by client, project, and task,
@@ -469,7 +570,7 @@ def main() -> None:
     )
     table.add_row(["", "", "", "", f"{total_minutes / 60:.2f}"])
 
-    # Both tables sum the same rounded task rows, so their totals must agree
+    # All tables sum the same rounded task rows, so their totals must agree
     weekly_total = sum(weekly.values())
     if weekly_total != total_minutes:
         msg = (
@@ -481,11 +582,14 @@ def main() -> None:
     if args.no_project:
         table.del_column("Project")
 
+    show_daily = args.hours_per_day and daily
     show_weekly = args.hours_per_week and weekly and period
 
     if args.html:
         if show_weekly:
             print(make_weekly_table(weekly, *period).get_html_string())
+        if show_daily:
+            print(make_daily_table(daily).get_html_string())
         if key:
             print(make_key_table(key).get_html_string())
         print(table.get_html_string())
@@ -502,10 +606,14 @@ def main() -> None:
             args.linkify_github_refs,
             weekly=weekly if show_weekly else None,
             period=period,
+            daily=daily if show_daily else None,
         )
     else:
         if show_weekly:
             print(make_weekly_table(weekly, *period))
+            print()
+        if show_daily:
+            print(make_daily_table(daily))
             print()
         if key:
             print(make_key_table(key))

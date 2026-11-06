@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from timesheet import (
+    daily_table_data,
+    day_minutes,
     format_duration,
     format_hhmm,
     get_day_suffix,
@@ -185,6 +187,35 @@ class TestSplitByPeriod:
         assert [row["Start date"] for row in outside] == ["2026-08-31", "2026-10-01"]
 
 
+class TestDayMinutes:
+    def test_sums_task_rows_before_rounding(self) -> None:
+        # Arrange
+        # Two 40-second entries of the same task row round together
+        # (80s -> 1 minute), not separately (2 x 1 minute)
+        data = [
+            make_row("2026-08-03", "0:00:40"),
+            make_row("2026-08-03", "0:00:40"),
+            make_row("2026-08-03", "1:00:00", task="Task B"),
+        ]
+
+        # Act / Assert
+        assert day_minutes(data) == {dt.date(2026, 8, 3): 61}
+
+    def test_totals_per_day(self) -> None:
+        # Arrange
+        data = [
+            make_row("2026-08-03", "1:00:00"),
+            make_row("2026-08-03", "0:30:00", task="Task B"),
+            make_row("2026-08-04", "2:00:00"),
+        ]
+
+        # Act / Assert
+        assert day_minutes(data) == {
+            dt.date(2026, 8, 3): 90,
+            dt.date(2026, 8, 4): 120,
+        }
+
+
 class TestWeekMinutes:
     def test_sums_task_rows_before_rounding(self) -> None:
         # Arrange
@@ -236,6 +267,26 @@ class TestGetDaySuffix:
     )
     def test_suffix(self, day: int, expected: str) -> None:
         assert get_day_suffix(day) == expected
+
+
+class TestDailyTableData:
+    def test_rows(self) -> None:
+        # Arrange
+        minutes = {dt.date(2026, 10, 2): 260, dt.date(2026, 10, 1): 513}
+
+        # Act
+        rows = daily_table_data(minutes)
+
+        # Assert
+        assert rows == [
+            ["Day", "h:mm"],
+            ["2026-10-01", "8:33"],
+            ["2026-10-02", "4:20"],
+            ["Total", "12:53"],
+        ]
+
+    def test_empty(self) -> None:
+        assert daily_table_data({}) == [["Day", "h:mm"], ["Total", "0:00"]]
 
 
 class TestWeeklyTableData:
